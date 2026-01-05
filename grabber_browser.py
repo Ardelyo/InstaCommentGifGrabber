@@ -470,7 +470,7 @@ class BrowserGifGrabber:
         except Exception as e:
             LOG.error(f"Auth verification error: {e}")
             return False
-    def scan_comments(self, page: Page) -> dict:
+    def scan_comments(self, page: Page, target_url: str) -> dict:
         """Scanning comments for GIF stickers and textual content."""
         UI.step(2, 3, "Scanning comments (Stickers & Text)...")
         
@@ -1015,7 +1015,7 @@ class BrowserGifGrabber:
                         self.extract_post_media(page, media_dir)
 
                     # 2. Comments & Stickers
-                    scan_res = self.scan_comments(page)
+                    scan_res = self.scan_comments(page, target_url)
                     sticker_urls = scan_res.get("stickers", set())
                     comments = scan_res.get("comments", [])
                 

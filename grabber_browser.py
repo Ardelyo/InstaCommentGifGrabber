@@ -554,166 +554,157 @@ class BrowserGifGrabber:
             LOG.error(f"Auth verification error: {e}")
             return False
     def scan_comments(self, page: Page, target_url: str) -> dict:
-        """Scanning comments for GIF stickers and textual content with real-time dashboard."""
-        UI.section("SCANNING COMMENTS")
+        """Turbo v7.0: High-speed autonomous JS-driven extraction engine."""
+        UI.section("TURBO EXTRACTION ENGINE")
         
-        found_urls: Set[str] = set()
-        found_comments: List[dict] = []
-        last_count = 0
-        no_change_count = 0
-        
-        # Resilient selectors for modern IG layout
-        CONTAINER_SELECTORS = [
-            'div[role="presentation"] > div > div.x5yr21d', # Sidebar panel (Newer)
-            'div.x168nmei.x13lgm5w.x1n2onr6',               # Main post container
-            'div.x5yr21d.xw2csxc.x1odjw0f.x1n2onr6',        # General scrollable area
-            'article div[style*="overflow-y: auto"]'        # Fallback by style
-        ]
-        
-        PLUS_ICON_SEL = "svg[aria-label='Load more comments'], svg[aria-label='Muat komentar lainnya']"
-        LOAD_MORE_TEXT_SEL = "span:has-text('Load more'), span:has-text('Muat komentar')"
-        VIEW_REPLIES_SEL = "span:has-text('View all'), span:has-text('replies'), span:has-text('Lihat balasan')"
-        
-        # JS to extract both stickers and text
-        EXTRACT_JS = '''
-            (containerSel) => {
-                const container = document.querySelector(containerSel);
-                if (!container) return { stickers: [], comments: [] };
+        # JS Engine Core: This script runs autonomously in the browser
+        TURBO_ENGINE_JS = '''
+        (selectors, maxItems) => {
+            if (window._turboActive) return;
+            window._turboActive = true;
+            window._turboData = { stickers: new Set(), comments: [], idleCount: 0, totalExtracted: 0 };
+            
+            const findContainer = () => {
+                for (const sel of selectors.containers) {
+                    const el = document.querySelector(sel);
+                    if (el) return el;
+                }
+                return document.body;
+            };
+
+            const interval = setInterval(() => {
+                const container = findContainer();
+                let foundNew = false;
+
+                // 1. Force Scroll & Jiggle
+                if (container !== document.body) {
+                    container.scrollTop = container.scrollHeight;
+                } else {
+                    window.scrollBy(0, 800);
+                }
+
+                // 2. Automated Clicking (Fast Polling)
+                const itemsToClick = [
+                    ...container.querySelectorAll(selectors.plus),
+                    ...container.querySelectorAll(selectors.loadMore),
+                    ...container.querySelectorAll(selectors.replies)
+                ];
                 
-                const stickers = [];
-                const comments = [];
-                
-                // 1. Stickers
-                container.querySelectorAll('img[src*="giphy.com"], img.x12ol6y4').forEach(img => {
-                    if (img.src) stickers.push(img.src);
+                itemsToClick.forEach(btn => {
+                    if (btn.offsetParent !== null) { // is visible
+                        btn.click();
+                        foundNew = true;
+                    }
                 });
-                
-                // 2. Comments (Best effort text extraction)
+
+                // 3. Batch Extraction
+                // Stickers
+                container.querySelectorAll('img[src*="giphy.com"], img.x12ol6y4').forEach(img => {
+                    if (img.src && !window._turboData.stickers.has(img.src)) {
+                        window._turboData.stickers.add(img.src);
+                        foundNew = true;
+                    }
+                });
+
+                // Comments
                 container.querySelectorAll('span[dir="auto"]').forEach(span => {
                     const text = span.innerText;
                     if (text && text.length > 1) {
-                         let parent = span.parentElement;
-                         let foundUser = null;
-                         for(let i=0; i<5; i++) {
-                             if(!parent) break;
-                             const userLink = parent.querySelector('h3 a, div a[href^="/"]');
-                             if(userLink && userLink.innerText) {
-                                 foundUser = userLink.innerText;
-                                 break;
+                         const sig = text.substring(0, 50); // Simple sig
+                         if (!window._turboData.comments.some(c => c.text === text)) {
+                             let parent = span.parentElement;
+                             let user = "Unknown";
+                             for(let i=0; i<5; i++) {
+                                 if(!parent) break;
+                                 const link = parent.querySelector('h3 a, div a[href^="/"]');
+                                 if(link) { user = link.innerText; break; }
+                                 parent = parent.parentElement;
                              }
-                             parent = parent.parentElement;
+                             window._turboData.comments.push({user, text});
+                             foundNew = true;
                          }
-                         comments.push({user: foundUser || "Unknown", text: text});
                     }
                 });
-                
-                return { stickers: stickers, comments: comments };
-            }
+
+                if (foundNew) {
+                    window._turboData.idleCount = 0;
+                } else {
+                    window._turboData.idleCount++;
+                }
+
+                if (window._turboData.comments.length >= maxItems || window._turboData.idleCount > 40) {
+                    clearInterval(interval);
+                    window._turboActive = false;
+                }
+            }, 300); // 300ms ultra-fast cycle
+        }
         '''
 
-        # Dashboard Logic
-        def generate_dashboard(scroll: int, stickers: int, comments: int, status: str):
-            table = Table(box=box.MINIMAL, show_header=False)
-            table.add_row(f"[bold cyan]Scrolls:[/bold cyan] {scroll}/{CONFIG.MAX_SCROLLS}")
-            table.add_row(f"[bold green]Stickers:[/bold green] {stickers}")
-            table.add_row(f"[bold blue]Comments:[/bold blue] {comments}")
-            table.add_row(f"[bold magenta]Status:[/bold magenta] {status}")
-            return Panel(table, title="[bold white]Extraction Live Stream[/bold white]", border_style="cyan")
+        # Helper to get data from JS
+        GET_DATA_JS = '''
+        () => {
+            return {
+                stickers: Array.from(window._turboData.stickers),
+                comments: window._turboData.comments,
+                isActive: window._turboActive,
+                idle: window._turboData.idleCount
+            };
+        }
+        '''
 
-        with Live(generate_dashboard(0, 0, 0, "Initializing..."), refresh_per_second=4) as live:
-            for scroll_num in range(CONFIG.MAX_SCROLLS):
-                status_msg = "Scanning..."
-                
-                # 1. Navigation Check
-                if page.url.split('?')[0].rstrip('/') != target_url.rstrip('/'):
-                    status_msg = "Recovering navigation..."
-                    live.update(generate_dashboard(scroll_num, len(found_urls), len(found_comments), status_msg))
-                    page.goto(target_url, wait_until="load")
-                    page.wait_for_load_state("networkidle")
-                    time.sleep(2)
+        selectors = {
+            "containers": [
+                'div[role="presentation"] > div > div.x5yr21d',
+                'div.x168nmei.x13lgm5w.x1n2onr6',
+                'div.x5yr21d.xw2csxc.x1odjw0f.x1n2onr6'
+            ],
+            "plus": "svg[aria-label*='more'], svg[aria-label*='komentar']",
+            "loadMore": "span:has-text('Load more'), span:has-text('Muat komentar')",
+            "replies": "span:has-text('View all'), span:has-text('replies'), span:has-text('Lihat balasan')"
+        }
 
-                # 2. Resilient Container Finding
-                active_container_sel = None
-                for sel in CONTAINER_SELECTORS:
-                    if page.query_selector(sel):
-                        active_container_sel = sel
-                        break
-                
-                if not active_container_sel:
-                    status_msg = "Container not found, trying window fallback..."
-                    active_container_sel = "body" # Ultimate fallback
+        # Start the Engine
+        max_comments = CONFIG.MAX_SCROLLS * 10 # Estimated
+        page.evaluate(TURBO_ENGINE_JS, selectors, max_comments)
 
-                # 3. Extract
-                try:
-                    data = page.evaluate(EXTRACT_JS, active_container_sel)
-                    for u in data.get('stickers', []): found_urls.add(u)
-                    
-                    current_sigs = {f"{c['user']}:{c['text']}" for c in found_comments}
-                    for c in data.get('comments', []):
-                        sig = f"{c['user']}:{c['text']}"
-                        if sig not in current_sigs:
-                            found_comments.append(c)
-                except: pass
-                
-                live.update(generate_dashboard(scroll_num + 1, len(found_urls), len(found_comments), status_msg))
-
-                # 4. Interaction (Load More)
-                try:
-                    # Look for Load More icon or text
-                    for selector in [PLUS_ICON_SEL, LOAD_MORE_TEXT_SEL]:
-                        btn = page.query_selector(f"{active_container_sel} {selector}" if active_container_sel != "body" else selector)
-                        if btn and btn.is_visible():
-                            status_msg = "Expanding comments..."
-                            live.update(generate_dashboard(scroll_num + 1, len(found_urls), len(found_comments), status_msg))
-                            btn.click()
-                            time.sleep(random.uniform(1.2, 1.8))
-                            break
-                    
-                    # Replies
-                    reply = page.query_selector(VIEW_REPLIES_SEL)
-                    if reply and reply.is_visible():
-                        reply.click()
-                        time.sleep(0.5)
-                except: pass
-
-                # 5. Smart Completion Detection (Patience)
-                if len(found_urls) == last_count:
-                    no_change_count += 1
-                    # Double wait time for stubborn loads
-                    if no_change_count >= 15: 
-                        status_msg = "Completed (Max patience reached)"
-                        live.update(generate_dashboard(scroll_num + 1, len(found_urls), len(found_comments), status_msg))
-                        break
-                else:
-                    no_change_count = 0
-                
-                last_count = len(found_urls)
-
-                # 6. Aggressive Smooth Scroll
-                status_msg = "Scrolling heavily..."
-                page.evaluate(f'''
-                    (sel) => {{
-                        const el = document.querySelector(sel);
-                        if (el && el !== document.body) {{
-                            el.scrollTop = el.scrollHeight; // Go to bottom
-                            // Force lazy items by scrolling back up slightly and down
-                            setTimeout(() => el.scrollTop -= 100, 100);
-                            setTimeout(() => el.scrollTop += 200, 200);
-                        }} else {{
-                            window.scrollBy(0, 800);
-                        }}
-                    }}
-                ''', active_container_sel)
-                
-                # Use scrollIntoView on last element as ultimate trigger
-                try:
-                    last_comment = page.query_selector_all(f"{active_container_sel} span[dir='auto']")
-                    if last_comment:
-                        last_comment[-1].scroll_into_view_if_needed()
-                except: pass
-                
-                time.sleep(CONFIG.SCROLL_PAUSE + random.uniform(0.5, 1.0))
+        found_urls = set()
+        found_comments = []
         
+        def generate_dashboard(stickers: int, comments: int, status: str, idle: int):
+            table = Table(box=box.MINIMAL, show_header=False)
+            table.add_row(f"[bold cyan]Turbo Engine:[/bold cyan] [green]ACTIVE[/green]")
+            table.add_row(f"[bold green]Stickers Found:[/bold green] {stickers}")
+            table.add_row(f"[bold blue]Comments Found:[/bold blue] {comments}")
+            patience = "●" * (20 - idle) + "○" * idle if idle < 20 else "[red]Giving up...[/red]"
+            table.add_row(f"[bold magenta]Patience:[/bold magenta] {patience}")
+            table.add_row(f"[bold yellow]Status:[/bold yellow] {status}")
+            return Panel(table, title="[bold white]Turbo v7.0 Performance[/bold white]", border_style="cyan")
+
+        with Live(generate_dashboard(0, 0, "Launching Turbo Engine...", 0), refresh_per_second=2) as live:
+            while True:
+                # Polling
+                res = page.evaluate(GET_DATA_JS)
+                found_urls = set(res['stickers'])
+                found_comments = res['comments']
+                is_active = res['isActive']
+                idle_count = res['idle']
+                
+                status = "Fast-Scanning..."
+                if idle_count > 5: status = "[yellow]Waiting for content...[/yellow]"
+                if not is_active: status = "[green]Turbo Selesai (Completed)[/green]"
+                
+                live.update(generate_dashboard(len(found_urls), len(found_comments), status, idle_count))
+                
+                if not is_active:
+                    break
+                
+                # Check for navigation drift during turbo
+                if page.url.split('?')[0].rstrip('/') != target_url.rstrip('/'):
+                    page.goto(target_url, wait_until="load")
+                    page.evaluate(TURBO_ENGINE_JS, selectors, max_comments) # Restart engine
+                
+                time.sleep(1)
+
         return {"stickers": found_urls, "comments": found_comments}
     
     def download_sticker(self, url: str, index: int, save_dir: str) -> str:

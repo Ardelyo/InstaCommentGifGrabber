@@ -26,7 +26,7 @@ if %errorlevel% neq 0 (
 
 echo.
 echo [INFO] Installing Playwright Browsers...
-playwright install chromium
+python -m playwright install chromium
 if %errorlevel% neq 0 (
     echo [WARNING] Playwright install encountered an issue. continuing...
 )

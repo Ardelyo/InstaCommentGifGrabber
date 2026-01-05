@@ -32,6 +32,31 @@ from playwright.sync_api import sync_playwright, Page, Locator
 import json
 import threading
 from moviepy import VideoFileClip
+import pyperclip
+import questionary
+from questionary import Style as QuestionaryStyle
+from rich.console import Console
+from rich.panel import Panel
+from rich.table import Table
+from rich.live import Live
+from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn
+from rich import box
+from rich.layout import Layout
+from rich.text import Text
+
+CONSOLE = Console()
+
+# Questionary custom style for consistent branding
+QUESTIONARY_STYLE = QuestionaryStyle([
+    ('qmark', 'fg:cyan bold'),           # The "?" marker
+    ('question', 'bold'),                # Question text
+    ('answer', 'fg:green bold'),         # Selected answer
+    ('pointer', 'fg:cyan bold'),         # Selection pointer
+    ('highlighted', 'fg:cyan bold'),     # Highlighted choice
+    ('selected', 'fg:green'),            # Selected checkbox items
+    ('separator', 'fg:cyan'),            # Separator lines
+    ('instruction', 'fg:#888888 italic'), # Instructions like "Use arrow keys"
+])
 
 # Try to import colorama for cross-platform color support
 try:
@@ -89,121 +114,179 @@ class MediaConverter:
 # UI UTILITIES - Enterprise Grade Terminal Interface
 # ============================================================================
 class UI:
-    """Enterprise-grade terminal UI with rich visuals and performance tracking."""
-    
-    # Box drawing characters
-    BOX_TL = '┌'
-    BOX_TR = '┐'
-    BOX_BL = '└'
-    BOX_BR = '┘'
-    BOX_H = '─'
-    BOX_V = '│'
+    """Enterprise-grade TUI with interactive menus and animations."""
     
     @staticmethod
     def clear():
         os.system('cls' if os.name == 'nt' else 'clear')
-    
+
+    @staticmethod
+    def typing_effect(text: str, delay: float = 0.02):
+        """Simulate typing effect for dramatic output."""
+        for char in text:
+            CONSOLE.print(char, end="", style="bold cyan")
+            time.sleep(delay)
+        print()
+
     @staticmethod
     def banner():
-        banner = f"""
-{Fore.CYAN}{Style.BRIGHT}
-    ┌──────────────────────────────────────────────────────────────┐
-    │                                                              │
-    │   ██╗███╗   ██╗███████╗████████╗ █████╗  ASSET               │
-    │   ██║████╗  ██║██╔════╝╚══██╔══╝██╔══██╗ GRABBER             │
-    │   ██║██╔██╗ ██║███████╗   ██║   ███████║                     │
-    │   ██║██║╚██╗██║╚════██║   ██║   ██╔══██║                     │
-    │   ██║██║ ╚████║███████║   ██║   ██║  ██║                     │
-    │   ╚═╝╚═╝  ╚═══╝╚══════╝   ╚═╝   ╚═╝  ╚═╝                     │
-    │                                                              │
-    │{Fore.WHITE}       Instagram Asset Grabber v6.0  │  Enterprise          {Fore.CYAN}│
-    │                                                              │
-    │{Style.DIM}   @ardel.yo (IG/TikTok)  │  @ardelyo (GitHub)            {Style.BRIGHT}│
-    └──────────────────────────────────────────────────────────────┘
-{Style.RESET_ALL}"""
-        print(banner)
-    
+        """Display animated startup banner."""
+        UI.clear()
+        
+        ascii_art = """
+    ██╗███╗   ██╗███████╗████████╗ █████╗ 
+    ██║████╗  ██║██╔════╝╚══██╔══╝██╔══██╗
+    ██║██╔██╗ ██║███████╗   ██║   ███████║
+    ██║██║╚██╗██║╚════██║   ██║   ██╔══██║
+    ██║██║ ╚████║███████║   ██║   ██║  ██║
+    ╚═╝╚═╝  ╚═══╝╚══════╝   ╚═╝   ╚═╝  ╚═╝
+        """
+        
+        CONSOLE.print(ascii_art, style="bold cyan")
+        CONSOLE.print("           [bold white]ASSET GRABBER[/bold white] [dim]v6.0 Enterprise[/dim]")
+        CONSOLE.print("           [dim cyan]@ardel.yo | @ardelyo[/dim cyan]\n")
+        
+        # Loading animation
+        with CONSOLE.status("[bold green]Initializing systems...", spinner="dots"):
+            time.sleep(1.5)
+        
+        CONSOLE.print("[green]✔[/green] All systems online.\n")
+
     @staticmethod
     def section(title: str):
-        """Print a boxed section header."""
-        width = 58
-        padding = width - len(title) - 2
-        left_pad = padding // 2
-        right_pad = padding - left_pad
-        print(f"\n{Fore.CYAN}    ┌{'─' * width}┐")
-        print(f"    │{' ' * left_pad} {Style.BRIGHT}{title}{Style.RESET_ALL}{Fore.CYAN} {' ' * right_pad}│")
-        print(f"    └{'─' * width}┘{Style.RESET_ALL}\n")
-    
-    @staticmethod
-    def step(num: int, total: int, text: str):
-        """Print a numbered step with visual indicator."""
-        dots = '●' * num + '○' * (total - num)
-        print(f"    {Fore.CYAN}{dots}{Style.RESET_ALL}  {text}")
-    
-    @staticmethod
-    def success(text: str):
-        print(f"    {Fore.GREEN}[OK]{Style.RESET_ALL} {text}")
-    
-    @staticmethod
-    def warning(text: str):
-        print(f"    {Fore.YELLOW}[!]{Style.RESET_ALL} {text}")
-    
-    @staticmethod
-    def error(text: str):
-        print(f"    {Fore.RED}[X]{Style.RESET_ALL} {text}")
-    
+        """Display a styled section header."""
+        CONSOLE.print()
+        CONSOLE.rule(f"[bold cyan]{title}[/bold cyan]", style="cyan")
+        CONSOLE.print()
+
     @staticmethod
     def info(text: str):
-        print(f"    {Fore.WHITE}[i]{Style.RESET_ALL} {text}")
+        CONSOLE.print(f"  [blue]ℹ[/blue]  {text}")
+
+    @staticmethod
+    def success(text: str):
+        CONSOLE.print(f"  [green]✔[/green]  {text}")
+
+    @staticmethod
+    def warning(text: str):
+        CONSOLE.print(f"  [yellow]⚠[/yellow]  {text}")
+
+    @staticmethod
+    def error(text: str):
+        CONSOLE.print(f"  [red]✘[/red]  {text}")
+
+    @staticmethod
+    def step(num: int, total: int, text: str):
+        """Display a numbered step with visual progress dots."""
+        dots = "[bold cyan]●[/bold cyan]" * num + "[dim]○[/dim]" * (total - num)
+        CONSOLE.print(f"  {dots}  {text}")
+    
+    @staticmethod
+    def select(title: str, choices: list, default: str = None) -> str:
+        """Interactive arrow-key menu selection."""
+        CONSOLE.print()  # Spacing
+        result = questionary.select(
+            title,
+            choices=choices,
+            default=default,
+            style=QUESTIONARY_STYLE,
+            qmark="➤",
+            pointer="❯",
+            instruction="  (Gunakan ↑↓ untuk navigasi, Enter untuk pilih)"
+        ).ask()
+        return result if result else (default or choices[0])
+    
+    @staticmethod
+    def checkbox(title: str, choices: list) -> list:
+        """Interactive checkbox multi-select with spacebar."""
+        CONSOLE.print()  # Spacing
+        result = questionary.checkbox(
+            title,
+            choices=choices,
+            style=QUESTIONARY_STYLE,
+            qmark="➤",
+            pointer="❯",
+            instruction="  (Spasi untuk pilih/lepas, Enter untuk konfirmasi)"
+        ).ask()
+        return result if result else []
+    
+    @staticmethod
+    def text_input(label: str, default: str = "", validate=None) -> str:
+        """Get text input with validation."""
+        CONSOLE.print()  # Spacing
+        result = questionary.text(
+            label,
+            default=default,
+            validate=validate,
+            style=QUESTIONARY_STYLE,
+            qmark="➤"
+        ).ask()
+        return result if result else default
+
+    @staticmethod
+    def path_input(label: str, default: str = "") -> str:
+        """Get path input with autocomplete."""
+        CONSOLE.print()  # Spacing
+        result = questionary.path(
+            label,
+            default=default,
+            style=QUESTIONARY_STYLE,
+            qmark="➤"
+        ).ask()
+        return result if result else default
     
     @staticmethod
     def prompt(text: str) -> str:
-        """Get styled input from user."""
-        print(f"    {Fore.WHITE}Petunjuk: Paste Link Instagram atau geser (drag) folder ke sini.{Style.RESET_ALL}")
-        return input(f"    {Fore.MAGENTA}>{Style.RESET_ALL} {text}: ").strip()
-    
+        """Get input with clipboard detection."""
+        try:
+            clip = pyperclip.paste().strip()
+            if clip.startswith("http") and "instagram" in clip.lower():
+                CONSOLE.print(f"\n  [green]📋 Link dari clipboard terdeteksi:[/green]")
+                CONSOLE.print(f"  [dim]{clip}[/dim]\n")
+        except: pass
+        
+        return UI.text_input(text)
+
     @staticmethod
     def confirm(text: str) -> bool:
-        """Get yes/no confirmation."""
-        resp = input(f"    {Fore.MAGENTA}>{Style.RESET_ALL} {text} (y/N): ").strip().lower()
-        return resp in ('y', 'yes')
+        """Interactive yes/no confirmation with arrow keys."""
+        CONSOLE.print()  # Spacing
+        result = questionary.confirm(
+            text,
+            default=True,
+            style=QUESTIONARY_STYLE,
+            qmark="➤"
+        ).ask()
+        return result if result is not None else True
     
     @staticmethod
-    def wait_for_enter(text: str = "Press ENTER to continue..."):
-        input(f"\n    {Fore.CYAN}>{Style.RESET_ALL} {text}")
-    
+    def final_report(stickers: any, duration: float, path: str):
+        """Display a beautiful final summary table."""
+        CONSOLE.print()
+        
+        table = Table(
+            title="[bold green]✔ SESI SELESAI (SESSION COMPLETE)[/bold green]",
+            box=box.DOUBLE_EDGE,
+            border_style="green",
+            title_justify="center",
+            show_header=True,
+            header_style="bold cyan"
+        )
+        table.add_column("Metrik", style="white", justify="left")
+        table.add_column("Nilai", style="bold green", justify="right")
+        
+        table.add_row("Assets Diproses", str(stickers))
+        table.add_row("Waktu Eksekusi", f"{duration:.1f} detik")
+        table.add_row("Lokasi Output", os.path.basename(path))
+        
+        CONSOLE.print(table)
+        CONSOLE.print(f"\n  [dim]Log detail tersedia di: {CONFIG.LOG_FILE}[/dim]")
+        CONSOLE.print()
+
     @staticmethod
-    def progress_bar(current: int, total: int, width: int = 30, prefix: str = ""):
-        """Print a clean progress bar with percentage."""
-        pct = current / total if total else 0
-        filled = int(width * pct)
-        bar = '━' * filled + '╸' + '─' * (width - filled - 1) if filled < width else '━' * width
-        status = f"{current}/{total}"
-        print(f"\r    {prefix}{Fore.GREEN}{bar}{Style.RESET_ALL} {status} ({pct*100:.0f}%)", end='', flush=True)
-    
-    @staticmethod
-    def stats_box(stats: dict):
-        """Display a statistics box with key metrics."""
-        print(f"\n    {Fore.CYAN}┌{'─' * 40}┐{Style.RESET_ALL}")
-        for key, value in stats.items():
-            print(f"    {Fore.CYAN}│{Style.RESET_ALL}  {key:<20} {Fore.WHITE}{value:>16}{Style.RESET_ALL}  {Fore.CYAN}│{Style.RESET_ALL}")
-        print(f"    {Fore.CYAN}└{'─' * 40}┘{Style.RESET_ALL}")
-    
-    @staticmethod
-    def final_report(stickers: int, duration: float, path: str = ""):
-        """Display final operation report."""
-        speed = stickers / duration if duration > 0 else 0
-        print(f"""
-    {Fore.GREEN}┌────────────────────────────────────────────┐
-    │{Style.BRIGHT}          OPERATION COMPLETE                {Style.RESET_ALL}{Fore.GREEN}│
-    ├────────────────────────────────────────────┤
-    │  Stickers Extracted    {stickers:>18}  │
-    │  Total Duration        {duration:>15.1f}s  │
-    │  Average Speed         {speed:>13.2f}/sec  │
-    └────────────────────────────────────────────┘{Style.RESET_ALL}
-""")
-        if path:
-            UI.info(f"Saved to: {path}")
+    def wait_for_enter(text: str = "Tekan ENTER untuk melanjutkan..."):
+        """Wait for user to press enter."""
+        CONSOLE.input(f"\n  [bold yellow]⏸ {text}[/bold yellow] ")
 
 # ============================================================================
 # LOGGING (File only, console is handled by UI)
@@ -443,17 +526,17 @@ class BrowserGifGrabber:
                     UI.success("Post accessible.")
                     return True
 
-            UI.warning("Login required to view comments.")
-            UI.section("MANUAL LOGIN REQUIRED")
-            print(f"""
-    {Fore.WHITE}The browser is at: {page.url}
-    
-    {Fore.YELLOW}Action Required:
-    {Style.RESET_ALL}  1. Log in manually in the browser window
-       2. Once you see the post and comments, come back here
-       3. Press ENTER to continue
+            UI.warning("Login diperlukan untuk melihat komentar.")
+            UI.section("LOGIN MANUAL DIPERLUKAN")
+            CONSOLE.print(f"""
+  [white]Browser sedang berada di: {page.url}[/white]
+  
+  [bold yellow]Aksi yang Perlu Dilakukan:[/bold yellow]
+    1. Login secara manual di jendela browser yang terbuka
+    2. Setelah Anda melihat postingan dan komentar, kembali ke sini
+    3. Tekan ENTER untuk melanjutkan
 """)
-            UI.wait_for_enter("Press ENTER after you have logged in...")
+            UI.wait_for_enter("Tekan ENTER setelah Anda login...")
             
             # Final check - go back to the target post to be sure
             UI.info("Re-verifying access...")
@@ -471,17 +554,25 @@ class BrowserGifGrabber:
             LOG.error(f"Auth verification error: {e}")
             return False
     def scan_comments(self, page: Page, target_url: str) -> dict:
-        """Scanning comments for GIF stickers and textual content."""
-        UI.step(2, 3, "Scanning comments (Stickers & Text)...")
+        """Scanning comments for GIF stickers and textual content with real-time dashboard."""
+        UI.section("SCANNING COMMENTS")
         
         found_urls: Set[str] = set()
         found_comments: List[dict] = []
         last_count = 0
         no_change_count = 0
         
-        CONTAINER_SEL = "div.x5yr21d.xw2csxc.x1odjw0f.x1n2onr6"
-        PLUS_ICON_SEL = "svg[aria-label='Load more comments']"
-        VIEW_REPLIES_SEL = "span:has-text('View all'), span:has-text('replies')"
+        # Resilient selectors for modern IG layout
+        CONTAINER_SELECTORS = [
+            'div[role="presentation"] > div > div.x5yr21d', # Sidebar panel (Newer)
+            'div.x168nmei.x13lgm5w.x1n2onr6',               # Main post container
+            'div.x5yr21d.xw2csxc.x1odjw0f.x1n2onr6',        # General scrollable area
+            'article div[style*="overflow-y: auto"]'        # Fallback by style
+        ]
+        
+        PLUS_ICON_SEL = "svg[aria-label='Load more comments'], svg[aria-label='Muat komentar lainnya']"
+        LOAD_MORE_TEXT_SEL = "span:has-text('Load more'), span:has-text('Muat komentar')"
+        VIEW_REPLIES_SEL = "span:has-text('View all'), span:has-text('replies'), span:has-text('Lihat balasan')"
         
         # JS to extract both stickers and text
         EXTRACT_JS = '''
@@ -520,74 +611,109 @@ class BrowserGifGrabber:
             }
         '''
 
-        for scroll_num in range(CONFIG.MAX_SCROLLS):
-            # 1. Navigation Check
-            if page.url.split('?')[0].rstrip('/') != target_url.rstrip('/'):
-                LOG.warning("Navigation drift detected, auto-recovering...")
-                page.goto(target_url, wait_until="load")
-                time.sleep(2)
+        # Dashboard Logic
+        def generate_dashboard(scroll: int, stickers: int, comments: int, status: str):
+            table = Table(box=box.MINIMAL, show_header=False)
+            table.add_row(f"[bold cyan]Scrolls:[/bold cyan] {scroll}/{CONFIG.MAX_SCROLLS}")
+            table.add_row(f"[bold green]Stickers:[/bold green] {stickers}")
+            table.add_row(f"[bold blue]Comments:[/bold blue] {comments}")
+            table.add_row(f"[bold magenta]Status:[/bold magenta] {status}")
+            return Panel(table, title="[bold white]Extraction Live Stream[/bold white]", border_style="cyan")
 
-            # 2. Extract
-            try:
-                data = page.evaluate(EXTRACT_JS, CONTAINER_SEL)
+        with Live(generate_dashboard(0, 0, 0, "Initializing..."), refresh_per_second=4) as live:
+            for scroll_num in range(CONFIG.MAX_SCROLLS):
+                status_msg = "Scanning..."
                 
-                # Merge Data
-                for u in data.get('stickers', []): found_urls.add(u)
+                # 1. Navigation Check
+                if page.url.split('?')[0].rstrip('/') != target_url.rstrip('/'):
+                    status_msg = "Recovering navigation..."
+                    live.update(generate_dashboard(scroll_num, len(found_urls), len(found_comments), status_msg))
+                    page.goto(target_url, wait_until="load")
+                    page.wait_for_load_state("networkidle")
+                    time.sleep(2)
+
+                # 2. Resilient Container Finding
+                active_container_sel = None
+                for sel in CONTAINER_SELECTORS:
+                    if page.query_selector(sel):
+                        active_container_sel = sel
+                        break
                 
-                # Simple dedup for comments
-                current_sigs = {f"{c['user']}:{c['text']}" for c in found_comments}
-                for c in data.get('comments', []):
-                    sig = f"{c['user']}:{c['text']}"
-                    if sig not in current_sigs:
-                        found_comments.append(c)
-            except Exception as e:
-                pass # Continue scan even if JS fails
-            
-            # Print status
-            num_comments = len(found_comments)
-            print(f"\r    {Fore.CYAN}➤ {Style.BRIGHT}Scanning:{Style.RESET_ALL} {scroll_num+1:<3} scrolls | {len(found_urls):<3} stickers | {num_comments:<3} comments", end='', flush=True)
+                if not active_container_sel:
+                    status_msg = "Container not found, trying window fallback..."
+                    active_container_sel = "body" # Ultimate fallback
 
-            # 3. Smart Completion Detection
-            has_load_more = page.query_selector(f"{CONTAINER_SEL} {PLUS_ICON_SEL}") is not None
-            
-            if len(found_urls) == last_count:
-                no_change_count += 1
-                if no_change_count >= 8 and not has_load_more:
-                    UI.info("\n    No more new content detected.")
-                    break
-            else:
-                no_change_count = 0
-            
-            last_count = len(found_urls)
-
-            # 4. Interaction
-            try:
-                container = page.query_selector(CONTAINER_SEL)
-                if container:
-                    plus = container.query_selector(PLUS_ICON_SEL)
-                    if plus: 
-                        plus.click()
-                        time.sleep(random.uniform(1.0, 1.5))
+                # 3. Extract
+                try:
+                    data = page.evaluate(EXTRACT_JS, active_container_sel)
+                    for u in data.get('stickers', []): found_urls.add(u)
                     
-                    reply = container.query_selector(VIEW_REPLIES_SEL)
-                    if reply: 
-                        reply.click()
-                        time.sleep(random.uniform(0.5, 0.8))
-            except: pass
+                    current_sigs = {f"{c['user']}:{c['text']}" for c in found_comments}
+                    for c in data.get('comments', []):
+                        sig = f"{c['user']}:{c['text']}"
+                        if sig not in current_sigs:
+                            found_comments.append(c)
+                except: pass
+                
+                live.update(generate_dashboard(scroll_num + 1, len(found_urls), len(found_comments), status_msg))
 
-            # 5. Smooth Scroll
-            page.evaluate(f'''
-                (sel) => {{
-                    const el = document.querySelector(sel);
-                    if (el) {{
-                        el.scrollTop += 600;
+                # 4. Interaction (Load More)
+                try:
+                    # Look for Load More icon or text
+                    for selector in [PLUS_ICON_SEL, LOAD_MORE_TEXT_SEL]:
+                        btn = page.query_selector(f"{active_container_sel} {selector}" if active_container_sel != "body" else selector)
+                        if btn and btn.is_visible():
+                            status_msg = "Expanding comments..."
+                            live.update(generate_dashboard(scroll_num + 1, len(found_urls), len(found_comments), status_msg))
+                            btn.click()
+                            time.sleep(random.uniform(1.2, 1.8))
+                            break
+                    
+                    # Replies
+                    reply = page.query_selector(VIEW_REPLIES_SEL)
+                    if reply and reply.is_visible():
+                        reply.click()
+                        time.sleep(0.5)
+                except: pass
+
+                # 5. Smart Completion Detection (Patience)
+                if len(found_urls) == last_count:
+                    no_change_count += 1
+                    # Double wait time for stubborn loads
+                    if no_change_count >= 15: 
+                        status_msg = "Completed (Max patience reached)"
+                        live.update(generate_dashboard(scroll_num + 1, len(found_urls), len(found_comments), status_msg))
+                        break
+                else:
+                    no_change_count = 0
+                
+                last_count = len(found_urls)
+
+                # 6. Aggressive Smooth Scroll
+                status_msg = "Scrolling heavily..."
+                page.evaluate(f'''
+                    (sel) => {{
+                        const el = document.querySelector(sel);
+                        if (el && el !== document.body) {{
+                            el.scrollTop = el.scrollHeight; // Go to bottom
+                            // Force lazy items by scrolling back up slightly and down
+                            setTimeout(() => el.scrollTop -= 100, 100);
+                            setTimeout(() => el.scrollTop += 200, 200);
+                        }} else {{
+                            window.scrollBy(0, 800);
+                        }}
                     }}
-                }}
-            ''', CONTAINER_SEL)
-            
-            time.sleep(CONFIG.SCROLL_PAUSE + random.uniform(0.2, 0.5))
+                ''', active_container_sel)
+                
+                # Use scrollIntoView on last element as ultimate trigger
+                try:
+                    last_comment = page.query_selector_all(f"{active_container_sel} span[dir='auto']")
+                    if last_comment:
+                        last_comment[-1].scroll_into_view_if_needed()
+                except: pass
+                
+                time.sleep(CONFIG.SCROLL_PAUSE + random.uniform(0.5, 1.0))
         
-        print()
         return {"stickers": found_urls, "comments": found_comments}
     
     def download_sticker(self, url: str, index: int, save_dir: str) -> str:
@@ -610,47 +736,52 @@ class BrowserGifGrabber:
             return None
 
     def convert_stickers_parallel(self, sticker_paths: List[str], converted_dir: str):
-        """v6.0: Convert multiple GIFs to MP4 in parallel."""
+        """v6.0: Convert multiple GIFs to MP4 in parallel with Rich progress."""
         UI.section("CONVERTING TO MP4 (Turbo)")
-        total = len(sticker_paths)
-        converted_count = 0
         
         def _task(path):
             fname = os.path.basename(path)
             name_no_ext = os.path.splitext(fname)[0]
             out_path = os.path.join(converted_dir, f"{name_no_ext}.mp4")
-            if MediaConverter.convert_gif_to_mp4(path, out_path):
-                return True
-            return False
+            return MediaConverter.convert_gif_to_mp4(path, out_path)
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=CONFIG.MAX_WORKERS) as executor:
-            futures = [executor.submit(_task, p) for p in sticker_paths]
-            for future in concurrent.futures.as_completed(futures):
-                if future.result():
-                    converted_count += 1
-                UI.progress_bar(converted_count, total, prefix="Converting: ")
-        print()
-        UI.success(f"Converted {converted_count} files.")
-        return converted_count
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(bar_width=40),
+            TaskProgressColumn(),
+            transient=True,
+        ) as progress:
+            task = progress.add_task("Converting GIFs...", total=len(sticker_paths))
+            
+            with concurrent.futures.ThreadPoolExecutor(max_workers=CONFIG.MAX_WORKERS) as executor:
+                futures = [executor.submit(_task, p) for p in sticker_paths]
+                for future in concurrent.futures.as_completed(futures):
+                    progress.advance(task)
+        
+        UI.success(f"Converted {len(sticker_paths)} files.")
 
     def download_stickers_parallel(self, urls: List[str], save_dir: str) -> List[str]:
-        """v6.0: Download multiple stickers simultaneously."""
+        """v6.0: Download multiple stickers simultaneously with Rich progress."""
         downloaded = []
-        total = len(urls)
         
-        with concurrent.futures.ThreadPoolExecutor(max_workers=CONFIG.MAX_WORKERS) as executor:
-            # Map URLs to futures
-            future_to_idx = {executor.submit(self.download_sticker, url, i+1, save_dir): i for i, url in enumerate(urls)}
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(bar_width=40),
+            TaskProgressColumn(),
+            transient=True,
+        ) as progress:
+            task = progress.add_task("Downloading Stickers...", total=len(urls))
             
-            for future in concurrent.futures.as_completed(future_to_idx):
-                path = future.result()
-                if path:
-                    downloaded.append(path)
-                
-                # Dynamic progress bar
-                UI.progress_bar(len(downloaded), total)
+            with concurrent.futures.ThreadPoolExecutor(max_workers=CONFIG.MAX_WORKERS) as executor:
+                future_to_url = {executor.submit(self.download_sticker, url, i+1, save_dir): url for i, url in enumerate(urls)}
+                for future in concurrent.futures.as_completed(future_to_url):
+                    path = future.result()
+                    if path:
+                        downloaded.append(path)
+                    progress.advance(task)
         
-        print() # Newline
         return downloaded
 
     def process_local_input(self, input_path: str):
@@ -900,23 +1031,62 @@ class BrowserGifGrabber:
             UI.error(f"Detailed highlight extraction failed: {e}")
         UI.info(f"Output Directory: {session_folder}")
 
+    def configure_session(self):
+        """Interactive Setup using questionary."""
+        UI.section("KONFIGURASI SESI")
+        
+        # 1. Output Directory (with path browser)
+        CONFIG.BASE_OUTPUT_DIR = UI.path_input(
+            "Lokasi Output (folder tempat hasil download disimpan):",
+            default=CONFIG.BASE_OUTPUT_DIR
+        )
+        UI.success(f"Output folder: [bold]{CONFIG.BASE_OUTPUT_DIR}[/bold]")
+        
+        # 2. Scan Depth with validation
+        depth_str = UI.text_input(
+            "Kedalaman Scan - Max Scrolls (semakin tinggi, semakin banyak komentar):",
+            default=str(CONFIG.MAX_SCROLLS),
+            validate=lambda x: x.isdigit() and int(x) > 0 or "Harus berupa angka positif"
+        )
+        CONFIG.MAX_SCROLLS = int(depth_str)
+        UI.success(f"Scan Depth: [bold]{CONFIG.MAX_SCROLLS}[/bold] scrolls")
+        
+        # 3. Content Type Selection (CHECKBOX for multi-select!)
+        selected = UI.checkbox(
+            "Pilih konten yang ingin didownload:",
+            choices=[
+                questionary.Choice("📷 Media (Foto/Video/Story)", value="media", checked=True),
+                questionary.Choice("💬 Komentar & Stiker GIF", value="comments", checked=True),
+                questionary.Choice("🎬 Convert GIF ke MP4", value="convert", checked=True),
+            ]
+        )
+        
+        CONFIG.DOWNLOAD_MEDIA = "media" in selected
+        CONFIG.EXTRACT_COMMENTS = "comments" in selected
+        CONFIG.CONVERT_TO_MP4 = "convert" in selected
+        
+        UI.success("Konfigurasi tersimpan!")
+
     def run(self):
-        # Startup Sequence
-        UI.clear()
-        print(f"\n{Fore.CYAN}    Initializing Enterprise Core...{Style.RESET_ALL}")
-        time.sleep(1)
-        
         start_time = time.time()
-        UI.clear()
-        UI.banner()
+        UI.banner() # Animated banner with spinner
         
-        UI.section("PERSIAPAN (SETUP)")
-        print(f"    {Fore.WHITE}Cara penggunaan tool ini:{Style.RESET_ALL}")
-        print(f"    1. {Fore.CYAN}Paste Link Instagram{Style.RESET_ALL} (Post/Reel/Profile)")
-        print(f"    2. {Fore.CYAN}Geser & Lepas Folder/Zip{Style.RESET_ALL} (Untuk convert GIF lokal ke MP4)")
-        print()
+        UI.section("INPUT")
         
-        user_input = UI.prompt("Masukkan Input")
+        # Main menu for input type (ARROW KEY NAVIGATION!)
+        action = UI.select(
+            "Apa yang ingin Anda lakukan?",
+            choices=[
+                "📥 Download dari Link Instagram (Post/Reel/Profile)",
+                "📂 Proses File Lokal (Folder/Zip berisi GIF)"
+            ]
+        )
+        
+        user_input = ""
+        if "Download dari Link" in action:
+            user_input = UI.prompt("Masukkan Link Instagram")
+        else:
+            user_input = UI.text_input("Path ke Folder/Zip:")
         
         # Clean input
         user_input = user_input.strip()
@@ -926,11 +1096,14 @@ class BrowserGifGrabber:
         
         # Detect Mode: Local
         if os.path.exists(user_input):
+            self.configure_session()
+             
             mode_desc = "Folder" if os.path.isdir(user_input) else "Zip Archive"
-            UI.info(f"Detected {Fore.GREEN}{mode_desc}{Style.RESET_ALL} input.")
+            UI.info(f"Terdeteksi sebagai: [bold green]{mode_desc}[/bold green]")
             UI.info(f"Path: {user_input}")
-            if UI.confirm("Proceed with local processing?"):
-                self.process_local_input(user_input)
+            
+            # Start processing automatically after config
+            self.process_local_input(user_input)
             return
 
         # URL Logic
@@ -955,11 +1128,11 @@ class BrowserGifGrabber:
              target_url = f"https://www.instagram.com/{target_id}/"
 
         mode_label = "PROFILE" if is_profile else "POST"
-        UI.info(f"Detected {Fore.GREEN}Instagram {mode_label}{Style.RESET_ALL}: {target_id}")
+        UI.info(f"Terdeteksi sebagai: [bold green]Instagram {mode_label}[/bold green]: {target_id}")
+
+        self.configure_session() # Run interactive config here
         
-        if not UI.confirm("Start browser session?"):
-            UI.warning("Operation cancelled.")
-            return
+        UI.section("MEMULAI SESI")
         
         # Output Directory Structure
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")

@@ -2,3 +2,6 @@ requests
 playwright
 colorama
 moviepy
+rich
+pyperclip
+questionary

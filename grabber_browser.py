@@ -28,7 +28,10 @@ from datetime import datetime
 from tkinter import filedialog, Tk
 from typing import List, Set
 from dataclasses import dataclass
-from playwright.sync_api import sync_playwright, Page
+from playwright.sync_api import sync_playwright, Page, Locator
+import json
+import threading
+from moviepy import VideoFileClip
 
 # Try to import colorama for cross-platform color support
 try:
@@ -48,14 +51,39 @@ except ImportError:
 @dataclass
 class Config:
     LOG_FILE: str = "grabber_browser.log"
-    TEMP_DIR: str = f"stickers_{int(time.time())}"
+    # New output structure: downloads/shortcode_timestamp/
+    BASE_OUTPUT_DIR: str = "downloads"
     USER_DATA_DIR: str = "ig_browser_session"
     SCROLL_PAUSE: float = 2.0
-    MAX_SCROLLS: int = 150  # Increased for larger posts
+    MAX_SCROLLS: int = 150
     HEADLESS: bool = False
-    MAX_WORKERS: int = 5    # For parallel downloads
+    MAX_WORKERS: int = 5
+    
+    # Feature Flags
+    DOWNLOAD_MEDIA: bool = True
+    EXTRACT_COMMENTS: bool = True
+    CONVERT_TO_MP4: bool = True
 
 CONFIG = Config()
+
+# ============================================================================
+# UTILITY: MEDIA CONVERTER
+# ============================================================================
+class MediaConverter:
+    @staticmethod
+    def convert_gif_to_mp4(input_path: str, output_path: str) -> bool:
+        """Convert GIF to MP4 using MoviePy."""
+        try:
+            # Load GIF
+            clip = VideoFileClip(input_path)
+            # Write MP4 (using libx264 codec for compatibility)
+            # logger=None suppresses the progress bar from moviepy to keep our UI clean
+            clip.write_videofile(output_path, codec="libx264", logger=None, audio=False)
+            clip.close()
+            return True
+        except Exception as e:
+            LOG.error(f"Conversion failed for {input_path}: {e}")
+            return False
 
 # ============================================================================
 # UI UTILITIES - Enterprise Grade Terminal Interface
@@ -131,6 +159,7 @@ class UI:
     @staticmethod
     def prompt(text: str) -> str:
         """Get styled input from user."""
+        print(f"    {Fore.WHITE}Petunjuk: Paste Link Instagram atau geser (drag) folder ke sini.{Style.RESET_ALL}")
         return input(f"    {Fore.MAGENTA}>{Style.RESET_ALL} {text}: ").strip()
     
     @staticmethod
@@ -225,6 +254,176 @@ class BrowserGifGrabber:
         # Fallback for old or alternative formats
         return url.strip('/').split('/')[-1].split('?')[0]
     
+    def _download_media(self, url, folder, filename):
+        if not url: return None
+        try:
+            resp = requests.get(url, stream=True, headers={"User-Agent": "Mozilla/5.0"})
+            path = os.path.join(folder, filename)
+            with open(path, 'wb') as f:
+                for chunk in resp.iter_content(8192):
+                    f.write(chunk)
+            print(f"    {Fore.GREEN}+ Captured:{Style.RESET_ALL} {filename}")
+            return path
+        except Exception as e:
+            return None
+
+    def extract_post_media(self, page: Page, save_dir: str):
+        """Extracts media (images/videos) from the main post."""
+        if not CONFIG.DOWNLOAD_MEDIA:
+            return
+            
+        UI.section("POST MEDIA EXTRACTION")
+        os.makedirs(save_dir, exist_ok=True)
+        
+        try:
+            # wait for post to load
+            page.wait_for_selector('article', timeout=5000)
+            
+            # Check for Carousel (ul in article)
+            # We use a broad selector to see if there are multiple items
+            carousel_arrow = page.query_selector("button[aria-label='Next']")
+            
+            seen_urls = set()
+            media_count = 0
+            
+            # Helper to grab current view
+            def scrape_current_view():
+                nonlocal media_count
+                # Images
+                imgs = page.query_selector_all("article img")
+                for img in imgs:
+                    src = img.get_attribute('src')
+                    if src and "instagram" in src and src not in seen_urls:
+                        # Filter out small UI icons if any (checking size usually better but src filter helps)
+                        seen_urls.add(src)
+                        media_count += 1
+                        self._download_media(src, save_dir, f"media_{media_count}.jpg")
+                
+                # Videos
+                vids = page.query_selector_all("article video")
+                for vid in vids:
+                    src = vid.get_attribute('src')
+                    poster = vid.get_attribute('poster')
+                    target = src if src else poster # Fallback
+                    if target and target not in seen_urls:
+                        seen_urls.add(target)
+                        media_count += 1
+                        ext = "mp4" if src else "jpg"
+                        self._download_media(target, save_dir, f"media_{media_count}.{ext}")
+
+            # Initial scrape
+            scrape_current_view()
+
+            # If carousel, click next
+            if carousel_arrow:
+                UI.info("Carousel detected. navigating...")
+                while True:
+                    next_btn = page.query_selector("button[aria-label='Next']")
+                    if not next_btn:
+                        break
+                    
+                    try:
+                        next_btn.click()
+                        time.sleep(1.0) # wait for animation
+                        scrape_current_view()
+                    except:
+                        break
+            
+            if media_count == 0:
+                UI.warning("No specific media found (possibly private or protected).")
+            else:
+                UI.success(f"Extracted {media_count} media files.")
+
+        except Exception as e:
+            LOG.error(f"Media extraction error: {e}")
+            UI.error(f"Failed to extract post media: {e}")
+
+    def _download_media(self, url, folder, filename):
+        if not url: return None
+        try:
+            # Add strict timeout and user-agent
+            resp = requests.get(url, stream=True, headers={"User-Agent": "Mozilla/5.0"}, timeout=15)
+            path = os.path.join(folder, filename)
+            with open(path, 'wb') as f:
+                for chunk in resp.iter_content(8192):
+                    f.write(chunk)
+            print(f"    {Fore.GREEN}+ Captured:{Style.RESET_ALL} {filename}")
+            return path
+        except Exception as e:
+            return None
+
+    def extract_post_media(self, page: Page, save_dir: str):
+        """Extracts media (images/videos) from the main post in parallel."""
+        if not CONFIG.DOWNLOAD_MEDIA: return
+            
+        UI.section("POST MEDIA EXTRACTION")
+        os.makedirs(save_dir, exist_ok=True)
+        
+        try:
+            try:
+                page.wait_for_selector('article', timeout=5000)
+            except:
+                UI.warning("Could not find post article.")
+                return
+
+            carousel_arrow = page.query_selector("button[aria-label='Next']")
+            seen_urls = set()
+            media_queue = [] # (url, filename)
+            
+            def queue_current_view():
+                # Images
+                imgs = page.query_selector_all("article img")
+                for img in imgs:
+                    src = img.get_attribute('src')
+                    if src and "instagram" in src and src not in seen_urls:
+                        seen_urls.add(src)
+                        idx = len(media_queue) + 1
+                        media_queue.append((src, f"media_{idx}.jpg"))
+                
+                # Videos
+                vids = page.query_selector_all("article video")
+                for vid in vids:
+                    src = vid.get_attribute('src')
+                    poster = vid.get_attribute('poster')
+                    target = src if src else poster
+                    if target and target not in seen_urls:
+                        seen_urls.add(target)
+                        idx = len(media_queue) + 1
+                        ext = "mp4" if src else "jpg"
+                        media_queue.append((target, f"media_{idx}.{ext}"))
+
+            UI.info("Scanning post for media...")
+            queue_current_view()
+
+            if carousel_arrow:
+                UI.info("Carousel detected. navigating...")
+                for _ in range(10): 
+                    next_btn = page.query_selector("button[aria-label='Next']")
+                    if not next_btn: break
+                    try:
+                        next_btn.click()
+                        time.sleep(1.0)
+                        queue_current_view()
+                    except: break
+            
+            if not media_queue:
+                UI.warning("No media found.")
+                return
+
+            UI.info(f"Downloading {len(media_queue)} media files in parallel...")
+            with concurrent.futures.ThreadPoolExecutor(max_workers=CONFIG.MAX_WORKERS) as executor:
+                futures = [executor.submit(self._download_media, url, save_dir, fname) for url, fname in media_queue]
+                count = 0
+                for future in concurrent.futures.as_completed(futures):
+                    count += 1
+                    UI.progress_bar(count, len(media_queue), prefix="Media: ")
+            print()
+            UI.success(f"Downloaded {len(media_queue)} media files.")
+
+        except Exception as e:
+            LOG.error(f"Media extraction error: {e}")
+            UI.error(f"Failed to extract post media: {e}")
+
     def ensure_authentication(self, page: Page, target_url: str) -> bool:
         """Navigates to post and ensures we are logged in to see comments."""
         try:
@@ -271,11 +470,12 @@ class BrowserGifGrabber:
         except Exception as e:
             LOG.error(f"Auth verification error: {e}")
             return False
-    def scroll_and_extract(self, page: Page, target_url: str) -> Set[str]:
-        """v6.0: Smooth scrolling with smart end-of-comment detection."""
-        UI.step(2, 3, "Scanning comments for GIF stickers...")
+    def scan_comments(self, page: Page) -> dict:
+        """Scanning comments for GIF stickers and textual content."""
+        UI.step(2, 3, "Scanning comments (Stickers & Text)...")
         
         found_urls: Set[str] = set()
+        found_comments: List[dict] = []
         last_count = 0
         no_change_count = 0
         
@@ -283,6 +483,43 @@ class BrowserGifGrabber:
         PLUS_ICON_SEL = "svg[aria-label='Load more comments']"
         VIEW_REPLIES_SEL = "span:has-text('View all'), span:has-text('replies')"
         
+        # JS to extract both stickers and text
+        EXTRACT_JS = '''
+            (containerSel) => {
+                const container = document.querySelector(containerSel);
+                if (!container) return { stickers: [], comments: [] };
+                
+                const stickers = [];
+                const comments = [];
+                
+                // 1. Stickers
+                container.querySelectorAll('img[src*="giphy.com"], img.x12ol6y4').forEach(img => {
+                    if (img.src) stickers.push(img.src);
+                });
+                
+                // 2. Comments (Best effort text extraction)
+                container.querySelectorAll('span[dir="auto"]').forEach(span => {
+                    const text = span.innerText;
+                    if (text && text.length > 1) {
+                         let parent = span.parentElement;
+                         let foundUser = null;
+                         for(let i=0; i<5; i++) {
+                             if(!parent) break;
+                             const userLink = parent.querySelector('h3 a, div a[href^="/"]');
+                             if(userLink && userLink.innerText) {
+                                 foundUser = userLink.innerText;
+                                 break;
+                             }
+                             parent = parent.parentElement;
+                         }
+                         comments.push({user: foundUser || "Unknown", text: text});
+                    }
+                });
+                
+                return { stickers: stickers, comments: comments };
+            }
+        '''
+
         for scroll_num in range(CONFIG.MAX_SCROLLS):
             # 1. Navigation Check
             if page.url.split('?')[0].rstrip('/') != target_url.rstrip('/'):
@@ -290,83 +527,68 @@ class BrowserGifGrabber:
                 page.goto(target_url, wait_until="load")
                 time.sleep(2)
 
-            # 2. Extract (Fast JS execution)
-            new_urls = page.evaluate(f'''
-                (containerSel) => {{
-                    const container = document.querySelector(containerSel);
-                    if (!container) return [];
-                    const found = [];
-                    // Giphy specific
-                    container.querySelectorAll('img[src*="giphy.com"]').forEach(img => {{
-                        if (img.src) found.push(img.src);
-                    }});
-                    // Sticker classes
-                    container.querySelectorAll('img.x12ol6y4').forEach(img => {{
-                        if (img.src) found.push(img.src);
-                    }});
-                    return found;
-                }}
-            ''', CONTAINER_SEL)
-            
-            for u in new_urls: found_urls.add(u)
+            # 2. Extract
+            try:
+                data = page.evaluate(EXTRACT_JS, CONTAINER_SEL)
+                
+                # Merge Data
+                for u in data.get('stickers', []): found_urls.add(u)
+                
+                # Simple dedup for comments
+                current_sigs = {f"{c['user']}:{c['text']}" for c in found_comments}
+                for c in data.get('comments', []):
+                    sig = f"{c['user']}:{c['text']}"
+                    if sig not in current_sigs:
+                        found_comments.append(c)
+            except Exception as e:
+                pass # Continue scan even if JS fails
             
             # Print status
-            print(f"\r    {Fore.CYAN}➤ {Style.BRIGHT}Scanning:{Style.RESET_ALL} {scroll_num+1:<3} scrolls | {len(found_urls):<3} stickers found", end='', flush=True)
+            num_comments = len(found_comments)
+            print(f"\r    {Fore.CYAN}➤ {Style.BRIGHT}Scanning:{Style.RESET_ALL} {scroll_num+1:<3} scrolls | {len(found_urls):<3} stickers | {num_comments:<3} comments", end='', flush=True)
 
             # 3. Smart Completion Detection
-            container_exists = page.query_selector(CONTAINER_SEL) is not None
             has_load_more = page.query_selector(f"{CONTAINER_SEL} {PLUS_ICON_SEL}") is not None
             
             if len(found_urls) == last_count:
                 no_change_count += 1
-                # If no new stickers AND no "Load more" buttons, we're likely done
-                if no_change_count >= 6 and not has_load_more:
-                    UI.info("\n    No more comments detected.")
+                if no_change_count >= 8 and not has_load_more:
+                    UI.info("\n    No more new content detected.")
                     break
             else:
                 no_change_count = 0
             
             last_count = len(found_urls)
 
-            # 4. Safe Interactions
+            # 4. Interaction
             try:
                 container = page.query_selector(CONTAINER_SEL)
                 if container:
-                    # Click Plus icons
                     plus = container.query_selector(PLUS_ICON_SEL)
                     if plus: 
                         plus.click()
                         time.sleep(random.uniform(1.0, 1.5))
                     
-                    # Click Reply buttons
                     reply = container.query_selector(VIEW_REPLIES_SEL)
                     if reply: 
                         reply.click()
                         time.sleep(random.uniform(0.5, 0.8))
             except: pass
 
-            # 5. Natural Smooth Scroll
+            # 5. Smooth Scroll
             page.evaluate(f'''
                 (sel) => {{
                     const el = document.querySelector(sel);
                     if (el) {{
-                        // Smoothly scroll to bottom in 3 steps
-                        const target = el.scrollHeight;
-                        const chunk = (target - el.scrollTop) / 3;
-                        let current = el.scrollTop;
-                        const interval = setInterval(() => {{
-                            current += chunk;
-                            el.scrollTop = current;
-                            if (current >= target) clearInterval(interval);
-                        }}, 50);
+                        el.scrollTop += 600;
                     }}
                 }}
             ''', CONTAINER_SEL)
             
             time.sleep(CONFIG.SCROLL_PAUSE + random.uniform(0.2, 0.5))
         
-        print() # Newline
-        return found_urls
+        print()
+        return {"stickers": found_urls, "comments": found_comments}
     
     def download_sticker(self, url: str, index: int, save_dir: str) -> str:
         try:
@@ -386,6 +608,30 @@ class BrowserGifGrabber:
             return filepath
         except:
             return None
+
+    def convert_stickers_parallel(self, sticker_paths: List[str], converted_dir: str):
+        """v6.0: Convert multiple GIFs to MP4 in parallel."""
+        UI.section("CONVERTING TO MP4 (Turbo)")
+        total = len(sticker_paths)
+        converted_count = 0
+        
+        def _task(path):
+            fname = os.path.basename(path)
+            name_no_ext = os.path.splitext(fname)[0]
+            out_path = os.path.join(converted_dir, f"{name_no_ext}.mp4")
+            if MediaConverter.convert_gif_to_mp4(path, out_path):
+                return True
+            return False
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=CONFIG.MAX_WORKERS) as executor:
+            futures = [executor.submit(_task, p) for p in sticker_paths]
+            for future in concurrent.futures.as_completed(futures):
+                if future.result():
+                    converted_count += 1
+                UI.progress_bar(converted_count, total, prefix="Converting: ")
+        print()
+        UI.success(f"Converted {converted_count} files.")
+        return converted_count
 
     def download_stickers_parallel(self, urls: List[str], save_dir: str) -> List[str]:
         """v6.0: Download multiple stickers simultaneously."""
@@ -407,33 +653,134 @@ class BrowserGifGrabber:
         print() # Newline
         return downloaded
 
+    def process_local_input(self, input_path: str):
+        """Process a local folder or zip file containing stickers."""
+        UI.section("LOCAL FILE PROCESSING")
+        
+        # Setup session folder
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        name = os.path.splitext(os.path.basename(input_path))[0]
+        session_folder = os.path.join(CONFIG.BASE_OUTPUT_DIR, f"{name}_{timestamp}")
+        stickers_dir = os.path.join(session_folder, "stickers")
+        converted_dir = os.path.join(session_folder, "converted")
+        
+        os.makedirs(session_folder, exist_ok=True)
+        os.makedirs(stickers_dir, exist_ok=True)
+        if CONFIG.CONVERT_TO_MP4: os.makedirs(converted_dir, exist_ok=True)
+        
+        # Extract/Copy Logic
+        sticker_files = []
+        
+        if zipfile.is_zipfile(input_path):
+            UI.info(f"Extracting Zip: {input_path}")
+            try:
+                with zipfile.ZipFile(input_path, 'r') as zf:
+                    for member in zf.namelist():
+                        if member.lower().endswith(('.gif', '.webp', '.mp4')):
+                            # Extract to stickers dir, flattening structure
+                            target_name = os.path.basename(member)
+                            target_path = os.path.join(stickers_dir, target_name)
+                            with open(target_path, 'wb') as f:
+                                f.write(zf.read(member))
+                            sticker_files.append(target_path)
+            except Exception as e:
+                UI.error(f"Zip extraction failed: {e}")
+                return
+        elif os.path.isdir(input_path):
+            UI.info(f"Scanning Folder: {input_path}")
+            for root, _, files in os.walk(input_path):
+                for file in files:
+                    if file.lower().endswith(('.gif', '.webp', '.mp4')):
+                        src = os.path.join(root, file)
+                        dst = os.path.join(stickers_dir, file)
+                        shutil.copy2(src, dst)
+                        sticker_files.append(dst)
+        else:
+            UI.error("Invalid input. Must be a Zip file or Directory.")
+            return
+
+        if not sticker_files:
+            UI.warning("No GIF/WebP/MP4 files found in input.")
+            return
+
+        UI.success(f"Found {len(sticker_files)} stickers.")
+
+        # Conversion Phase
+        if CONFIG.CONVERT_TO_MP4:
+            self.convert_stickers_parallel(sticker_files, converted_dir)
+
+        # Archive Result
+        UI.section("FULL ARCHIVE")
+        zip_path = shutil.make_archive(session_folder, 'zip', CONFIG.BASE_OUTPUT_DIR, f"{name}_{timestamp}")
+        UI.success(f"Archive: {zip_path}")
+        UI.info(f"Output Directory: {session_folder}")
+
     def run(self):
         # Startup Sequence
         UI.clear()
         print(f"\n{Fore.CYAN}    Initializing Enterprise Core...{Style.RESET_ALL}")
-        for _ in range(3):
-            time.sleep(0.2)
-            print(f"{Fore.CYAN}    .{Style.RESET_ALL}", end='', flush=True)
-        time.sleep(0.5)
+        time.sleep(1)
         
         start_time = time.time()
         UI.clear()
         UI.banner()
         
-        UI.section("SETUP")
-        url_input = UI.prompt("Enter Instagram Post URL")
-        shortcode = self.extract_shortcode(url_input)
+        UI.section("PERSIAPAN (SETUP)")
+        print(f"    {Fore.WHITE}Cara penggunaan tool ini:{Style.RESET_ALL}")
+        print(f"    1. {Fore.CYAN}Paste Link Instagram{Style.RESET_ALL} (Untuk download media & komentar)")
+        print(f"    2. {Fore.CYAN}Geser & Lepas Folder/Zip{Style.RESET_ALL} (Untuk convert GIF lokal ke MP4)")
+        print()
+        
+        user_input = UI.prompt("Masukkan Input")
+        
+        # Clean input
+        user_input = user_input.strip()
+        if user_input.startswith('& '): # PowerShell drag-and-drop handling
+            user_input = user_input[2:].strip()
+        user_input = user_input.strip('"\'')
+        
+        # Detect Mode
+        if os.path.exists(user_input):
+            mode_desc = "Folder" if os.path.isdir(user_input) else "Zip Archive"
+            UI.info(f"Detected {Fore.GREEN}{mode_desc}{Style.RESET_ALL} input.")
+            UI.info(f"Path: {user_input}")
+            if UI.confirm("Proceed with local processing?"):
+                self.process_local_input(user_input)
+            return
+
+        # URL Logic
+        shortcode = self.extract_shortcode(user_input)
         
         if not shortcode:
-            UI.error("Invalid Instagram URL format.")
+            UI.error("Could not understand that input.")
+            UI.info("Expected: Instagram URL or valid Local Path.")
             return
         
         target_url = f"https://www.instagram.com/p/{shortcode}/"
-        UI.info(f"Target: {shortcode}")
+        UI.info(f"Detected {Fore.GREEN}Instagram Post{Style.RESET_ALL}: {shortcode}")
+        UI.info(f"Action: Scraping media, comments, and stickers.")
         
+        if not UI.confirm("Start browser session?"):
+            UI.warning("Operation cancelled.")
+            return
+        
+        # Output Directory Structure
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        session_folder = os.path.join(CONFIG.BASE_OUTPUT_DIR, f"{shortcode}_{timestamp}")
+        media_dir = os.path.join(session_folder, "media")
+        stickers_dir = os.path.join(session_folder, "stickers")
+        converted_dir = os.path.join(session_folder, "converted")
+        
+        os.makedirs(session_folder, exist_ok=True)
+        if CONFIG.DOWNLOAD_MEDIA: os.makedirs(media_dir, exist_ok=True)
+        os.makedirs(stickers_dir, exist_ok=True)
+        if CONFIG.CONVERT_TO_MP4: os.makedirs(converted_dir, exist_ok=True)
+
         UI.section("BROWSER SESSION")
         
         sticker_urls = set()
+        comments = []
+        
         with sync_playwright() as pw:
             UI.info(f"Session: {CONFIG.USER_DATA_DIR}")
             
@@ -454,61 +801,52 @@ class BrowserGifGrabber:
                     ctx.close()
                     return
                 
-                # Scrape
-                sticker_urls = self.scroll_and_extract(page, target_url)
+                # 1. Post Media
+                if CONFIG.DOWNLOAD_MEDIA:
+                    self.extract_post_media(page, media_dir)
+
+                # 2. Comments & Stickers
+                scan_res = self.scan_comments(page)
+                sticker_urls = scan_res.get("stickers", set())
+                comments = scan_res.get("comments", [])
+                
                 page.close()
                 
             finally:
                 ctx.close()
         
+        # Save Comments
+        if comments:
+            with open(os.path.join(session_folder, "comments.json"), 'w', encoding='utf-8') as f:
+                json.dump(comments, f, indent=2, ensure_ascii=False)
+            UI.success(f"Saved {len(comments)} comments.")
+            
         if not sticker_urls:
             UI.warning("No GIF stickers found in comments.")
-            return
+        else:
+            # Download Stickers
+            UI.section(f"DOWNLOAD ({len(sticker_urls)} stickers)")
+            downloaded = self.download_stickers_parallel(list(sticker_urls), stickers_dir)
             
-        # Scan Summary
-        UI.stats_box({
-            "Target Found": str(len(sticker_urls)),
-            "Scan Duration": f"{time.time() - start_time:.1f}s",
-            "Status": "Ready for DL"
-        })
-        UI.wait_for_enter("Ready to download? Press ENTER")
-        
-        # Download Phase (Turbo)
-        UI.section(f"TURBO DOWNLOAD ({CONFIG.MAX_WORKERS} threads)")
-        os.makedirs(CONFIG.TEMP_DIR, exist_ok=True)
-        
-        downloaded = self.download_stickers_parallel(list(sticker_urls), CONFIG.TEMP_DIR)
-        
-        if not downloaded:
-            UI.error("No stickers downloaded.")
-            if os.path.exists(CONFIG.TEMP_DIR): shutil.rmtree(CONFIG.TEMP_DIR)
-            return
+            if not downloaded:
+                UI.error("No stickers downloaded.")
+            else:
+                # Convert
+                if CONFIG.CONVERT_TO_MP4:
+                    self.convert_stickers_parallel(downloaded, converted_dir)
         
         # Archive
-        UI.section("SAVE ARCHIVE")
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        save_path = filedialog.asksaveasfilename(
-            initialfile=f"stickers_{shortcode}_{timestamp}.zip",
-            title="Save Sticker Archive",
-            filetypes=[("ZIP Archive", "*.zip")],
-            defaultextension=".zip"
-        )
-        
-        if save_path:
-            with zipfile.ZipFile(save_path, 'w') as zf:
-                for f in downloaded:
-                    zf.write(f, os.path.basename(f))
-            UI.success(f"Saved to: {save_path}")
-        else:
-            UI.warning("Save cancelled.")
-        
-        # Cleanup
-        shutil.rmtree(CONFIG.TEMP_DIR)
+        UI.section("FULL ARCHIVE")
+        zip_path = shutil.make_archive(session_folder, 'zip', CONFIG.BASE_OUTPUT_DIR, f"{shortcode}_{timestamp}")
+        UI.success(f"Archive: {zip_path}")
         
         # Final Report
         duration = time.time() - start_time
-        UI.final_report(len(downloaded), duration, save_path if save_path else "")
-        UI.info(f"Log file: {CONFIG.LOG_FILE}")
+        UI.final_report(len(sticker_urls), duration, zip_path)
+        print(f"\n    {Fore.YELLOW}LOKASI HASIL (OUTPUT):{Style.RESET_ALL}")
+        print(f"    - Folder: {Fore.GREEN}{session_folder}{Style.RESET_ALL}")
+        print(f"    - File ZIP: {Fore.GREEN}{zip_path}.zip{Style.RESET_ALL}")
+        print(f"    {Style.DIM}Semua hasil download ada di dalam folder '{CONFIG.BASE_OUTPUT_DIR}'{Style.RESET_ALL}")
 
 if __name__ == "__main__":
     try:

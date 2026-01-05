@@ -1,64 +1,66 @@
-# Instagram GIF Grabber
+# 📸 Instagram GIF Grabber v6.0 (Enterprise)
+> **Master the Art of Instagram Asset Extraction with the Turbo Parallel Engine.**
 
-A fast, enterprise-grade tool to extract GIF stickers from Instagram comments.
+A high-performance, intelligent CLI tool designed for maximum speed. Extract **GIF stickers**, **High-Res Media**, and **Comments** in parallel. Optimized for creators who need assets *now*.
 
-## Features
+---
 
-- **Parallel Downloads** - Grabs multiple files simultaneously
-- **Smart Detection** - Automatically knows when all comments are loaded
-- **Session Persistence** - Login once, use forever
-- **Smooth Scrolling** - Natural interaction with Instagram's interface
-- **Clean Output** - Downloads saved as organized ZIP archives
+## 🚀 Key Features
 
-## Requirements
+*   **Turbo Parallel Engine**: 
+    *   **Multitasked Scraping**: Downloads images and videos across multiple threads simultaneously.
+    *   **Parallel Conversion**: Converts entire batches of GIFs to MP4 in seconds using all available CPU cores.
+*   **Smart Input**: Drag-and-drop a URL, a Folder, or a Zip file directly into the terminal.
+*   **Asset Extraction**:
+    *   **Stickers**: Extracts Giphy/Instagram stickers from comments.
+    *   **Media**: Downloads images, videos, and full carousels.
+    *   **Comments**: Saves text comments into a structured `comments.json`.
+*   **Batch Conversion**: Automatically converts all GIFs to **MP4 (h.264)** for easier use in video editors.
+*   **Enterprise UI**: A beautiful, responsive terminal interface with progress bars and status reports.
+*   **Secure & Robust**: Persistent browser sessions with automated login handling.
 
-- Python 3.8+
-- Windows/macOS/Linux
+---
 
-## Quick Start
+## 🚦 How to Use
 
-### Windows
-Double-click `setup_and_run.bat`
+### 1. One-Click Setup
+Double-click `setup_and_run.bat`. This automatically:
+- Installs Python dependencies.
+- Sets up the browser environment.
+- Launches the tool.
 
-### Manual Setup
-```bash
-pip install -r requirements.txt
-playwright install chromium
-python grabber_browser.py
-```
+### 2. Enter Input
+When prompted, you have two smart options:
+- **Option A (URL)**: Paste an Instagram post link to scrape live data.
+- **Option B (Local)**: Drag a folder/zip of GIFs onto the window to convert them.
 
-## Usage
+### 3. Review & Export
+All results are organized in the `downloads/` directory and zipped into a single archive for you automatically.
 
-1. Run the tool
-2. Paste an Instagram post/reel URL
-3. Login manually if prompted (first time only)
-4. Wait for extraction to complete
-5. Choose where to save your ZIP file
+---
 
-## Configuration
+## 🇮🇩 Panduan Untuk Pemula (Bahasa Indonesia)
 
-Edit these values in `grabber_browser.py`:
+Tool ini sangat mudah digunakan, bahkan jika Anda tidak mengerti coding:
 
-| Setting | Default | Description |
-|---------|---------|-------------|
-| `MAX_SCROLLS` | 150 | Maximum scroll attempts |
-| `MAX_WORKERS` | 5 | Parallel download threads |
-| `SCROLL_PAUSE` | 2.0 | Seconds between scrolls |
+1.  **Cara Buka**: Klik 2x file `setup_and_run.bat`. Tunggu sampai muncul tulisan "Masukkan Input".
+2.  **Cara Download**: 
+    -   Copy link postingan Instagram, lalu klik kanan di layar hitam terminal untuk Paste. Tekan Enter.
+    -   Atau, geser (drag) folder/zip berisi GIF ke dalam layar hitam terminal, lalu tekan Enter.
+3.  **Di Mana Hasilnya?**: 
+    -   Semua hasil download masuk ke folder baru bernama **`downloads`**.
+    -   Di dalamnya ada folder khusus sesuai link/nama file yang Anda masukkan.
+    -   Isinya: Foto/Video aslinya, Stiker GIF-nya, dan versi MP4-nya.
 
-## File Structure
+---
 
-```
-instagramgif/
-├── grabber_browser.py   # Main application
-├── requirements.txt     # Python dependencies
-├── setup_and_run.bat    # Windows launcher
-└── .gitignore           # Git ignore rules
-```
+## 🛠 Prerequisites
 
-## Credits
+- **Python 3.8+**
+- **Windows System** (Optimized for PowerShell/CMD).
 
-Created by [@ardel.yo](https://instagram.com/ardel.yo) (Instagram/TikTok) | [@ardelyo](https://github.com/ardelyo) (GitHub)
+---
 
-## License
-
-MIT License - Use freely, credit appreciated.
+## 💎 Author
+Developed with ❤️ by **@ardel.yo** (TikTok/IG) | **@ardelyo** (GitHub).
+*Version 6.0.0 (Enterprise Edition)*

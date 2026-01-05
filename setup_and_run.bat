@@ -1,9 +1,9 @@
 @echo off
-title Instagram GIF Grabber - Enterprise Edition
+title Instagram Asset Grabber - Enterprise Edition
 color 0b
 
 echo ========================================================
-echo    Instagram GIF Grabber - Environment Setup
+echo    Instagram Asset Grabber - Environment Setup
 echo ========================================================
 echo.
 

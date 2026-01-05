@@ -109,14 +109,14 @@ class UI:
 {Fore.CYAN}{Style.BRIGHT}
     ┌──────────────────────────────────────────────────────────────┐
     │                                                              │
-    │   ██╗███╗   ██╗███████╗████████╗ █████╗                      │
-    │   ██║████╗  ██║██╔════╝╚══██╔══╝██╔══██╗                     │
+    │   ██╗███╗   ██╗███████╗████████╗ █████╗  ASSET               │
+    │   ██║████╗  ██║██╔════╝╚══██╔══╝██╔══██╗ GRABBER             │
     │   ██║██╔██╗ ██║███████╗   ██║   ███████║                     │
     │   ██║██║╚██╗██║╚════██║   ██║   ██╔══██║                     │
     │   ██║██║ ╚████║███████║   ██║   ██║  ██║                     │
     │   ╚═╝╚═╝  ╚═══╝╚══════╝   ╚═╝   ╚═╝  ╚═╝                     │
     │                                                              │
-    │{Fore.WHITE}          GIF Grabber v6.0  │  Enterprise Edition          {Fore.CYAN}│
+    │{Fore.WHITE}       Instagram Asset Grabber v6.0  │  Enterprise          {Fore.CYAN}│
     │                                                              │
     │{Style.DIM}   @ardel.yo (IG/TikTok)  │  @ardelyo (GitHub)            {Style.BRIGHT}│
     └──────────────────────────────────────────────────────────────┘
@@ -713,6 +713,191 @@ class BrowserGifGrabber:
         UI.section("FULL ARCHIVE")
         zip_path = shutil.make_archive(session_folder, 'zip', CONFIG.BASE_OUTPUT_DIR, f"{name}_{timestamp}")
         UI.success(f"Archive: {zip_path}")
+        
+    def extract_profile_pic(self, page: Page, username: str, save_dir: str):
+        """Extracts the HD profile picture."""
+        UI.section("PROFILE PICTURE")
+        os.makedirs(save_dir, exist_ok=True)
+        try:
+            # 1. Try generic profile image selector
+            valid_img = None
+            
+            # Often the profile pic has alt containing the username
+            img = page.query_selector(f"img[alt*='{username}']")
+            if img:
+                valid_img = img.get_attribute("src")
+            else:
+                # Fallback: check standard metadata
+                meta = page.query_selector("meta[property='og:image']")
+                if meta:
+                    valid_img = meta.get_attribute("content")
+            
+            if valid_img:
+                self._download_media(valid_img, save_dir, f"{username}_profile.jpg")
+                UI.success("Profile picture downloaded.")
+            else:
+                UI.warning("Could not find profile picture.")
+                
+        except Exception as e:
+            LOG.error(f"Profile pic error: {e}")
+            UI.error(f"Profile pic failed: {e}")
+
+    def extract_stories(self, page: Page, username: str, save_dir: str):
+        """Extracts 24h Stories."""
+        UI.section("STORIES")
+        os.makedirs(save_dir, exist_ok=True)
+        
+        story_url = f"https://www.instagram.com/stories/{username}/"
+        UI.info(f"Navigating to stories: {story_url}")
+        
+        try:
+            page.goto(story_url, wait_until="networkidle")
+            time.sleep(3)
+            
+            # Check if stories exist (sometimes redirects to feed if none)
+            if "stories" not in page.url:
+                UI.warning("No active stories found (or private).")
+                return
+
+            # Click "View Story" if present (sometimes large button)
+            try:
+                view_btn = page.query_selector("text=View story")
+                if view_btn: view_btn.click()
+            except: pass
+
+            seen_urls = set()
+            story_count = 0
+            
+            # Loop through story slides
+            # We determine end by checking URL changes or if we are kicked back to feed
+            # Safety limit: 100 slides
+            for _ in range(100):
+                # 1. Grab Media
+                # Video
+                vid = page.query_selector("video source")
+                if vid:
+                    src = vid.get_attribute("src")
+                    if src and src not in seen_urls:
+                        seen_urls.add(src)
+                        story_count += 1
+                        self._download_media(src, save_dir, f"story_{story_count}.mp4")
+                
+                # Image (look for largest img that isn't UI)
+                try:
+                    imgs = page.query_selector_all("section img")
+                    if not imgs: imgs = page.query_selector_all("img") # Fallback
+                    
+                    for img in imgs:
+                        src = img.get_attribute("src")
+                        if src and "instagram" in src and src not in seen_urls:
+                             # Filter out tiny icons
+                            rect = img.bounding_box()
+                            if rect and rect['width'] > 300:
+                                seen_urls.add(src)
+                                story_count += 1
+                                self._download_media(src, save_dir, f"story_{story_count}.jpg")
+                except: pass
+                
+                # 2. Next Slide
+                # Try finding the "Next" hidden button (right side of screen)
+                try:
+                    next_arrow = page.query_selector("button[aria-label='Next']")
+                    if not next_arrow:
+                        # Sometimes it's simpler to click the right side of the page
+                        if page.viewport_size:
+                            page.mouse.click(x=page.viewport_size['width'] - 50, y=page.viewport_size['height'] // 2)
+                    else:
+                        next_arrow.click()
+                    
+                    time.sleep(1.5) # Wait for next slide
+                except:
+                    break
+                    
+                # Break if URL changes completely (left story viewer)
+                if "stories" not in page.url:
+                    break
+            
+            UI.success(f"Downloaded {story_count} story items.")
+
+        except Exception as e:
+            LOG.error(f"Story error: {e}")
+            UI.error(f"Failed to extract stories: {e}")
+
+    def extract_highlights(self, page: Page, username: str, save_dir: str):
+        """Extracts Highlights (Permanent Stories)."""
+        UI.section("HIGHLIGHTS")
+        # Go to profile first
+        page.goto(f"https://www.instagram.com/{username}/", wait_until="networkidle")
+        time.sleep(3)
+        
+        try:
+            hl_links = page.evaluate('''() => {
+                const links = Array.from(document.querySelectorAll('a[href*="/stories/highlights/"]'));
+                return links.map(a => a.href);
+            }''')
+            
+            # Unique highlights
+            hl_links = list(set(hl_links))
+            
+            if not hl_links:
+                UI.warning("No highlights found.")
+                return
+            
+            UI.info(f"Found {len(hl_links)} highlight albums.")
+            
+            for i, link in enumerate(hl_links):
+                hl_name = f"highlight_{i+1}"
+                hl_dir = os.path.join(save_dir, hl_name)
+                os.makedirs(hl_dir, exist_ok=True)
+                
+                UI.info(f"Processing Highlight {i+1}...")
+                
+                # Navigate to the highlight
+                page.goto(link, wait_until="networkidle")
+                time.sleep(2)
+                
+                # Similar loop to stories
+                seen = set()
+                count = 0
+                for _ in range(100):
+                    # Grab content (Video/Image)
+                    vid = page.query_selector("video source")
+                    if vid:
+                        src = vid.get_attribute("src")
+                        if src and src not in seen:
+                            seen.add(src)
+                            count += 1
+                            self._download_media(src, hl_dir, f"hl_{count}.mp4")
+                    else:
+                        # Image
+                        imgs = page.query_selector_all("img")
+                        for img in imgs:
+                            src = img.get_attribute("src")
+                            rect = img.bounding_box()
+                            # Rough heuristic for main image
+                            if src and "instagram" in src and rect and rect['width'] > 300 and src not in seen:
+                                seen.add(src)
+                                count += 1
+                                self._download_media(src, hl_dir, f"hl_{count}.jpg")
+
+                    # Next
+                    try:
+                        if page.viewport_size:
+                            page.mouse.click(x=page.viewport_size['width'] - 50, y=page.viewport_size['height'] // 2)
+                        time.sleep(1.0)
+                    except: break
+                    
+                    # Check if we moved to next highlight or closed
+                    # Highlights URLs often look like /stories/highlights/12345/
+                    # If ID changes, we are in next highlight.
+                    if link.split('/')[-2] not in page.url:
+                        break
+                        
+                UI.info(f"  > Saved {count} items.")
+
+        except Exception as e:
+            LOG.error(f"Highlight error: {e}")
+            UI.error(f"Detailed highlight extraction failed: {e}")
         UI.info(f"Output Directory: {session_folder}")
 
     def run(self):
@@ -727,7 +912,7 @@ class BrowserGifGrabber:
         
         UI.section("PERSIAPAN (SETUP)")
         print(f"    {Fore.WHITE}Cara penggunaan tool ini:{Style.RESET_ALL}")
-        print(f"    1. {Fore.CYAN}Paste Link Instagram{Style.RESET_ALL} (Untuk download media & komentar)")
+        print(f"    1. {Fore.CYAN}Paste Link Instagram{Style.RESET_ALL} (Post/Reel/Profile)")
         print(f"    2. {Fore.CYAN}Geser & Lepas Folder/Zip{Style.RESET_ALL} (Untuk convert GIF lokal ke MP4)")
         print()
         
@@ -739,7 +924,7 @@ class BrowserGifGrabber:
             user_input = user_input[2:].strip()
         user_input = user_input.strip('"\'')
         
-        # Detect Mode
+        # Detect Mode: Local
         if os.path.exists(user_input):
             mode_desc = "Folder" if os.path.isdir(user_input) else "Zip Archive"
             UI.info(f"Detected {Fore.GREEN}{mode_desc}{Style.RESET_ALL} input.")
@@ -749,16 +934,28 @@ class BrowserGifGrabber:
             return
 
         # URL Logic
-        shortcode = self.extract_shortcode(user_input)
+        is_profile = False
+        target_id = self.extract_shortcode(user_input) # Try as post first
         
-        if not shortcode:
+        if not target_id:
+            # Check if profile
+            parsed = urllib.parse.urlparse(user_input)
+            path_parts = [p for p in parsed.path.split('/') if p]
+            if len(path_parts) == 1:
+                target_id = path_parts[0]
+                is_profile = True
+        
+        if not target_id:
             UI.error("Could not understand that input.")
-            UI.info("Expected: Instagram URL or valid Local Path.")
+            UI.info("Expected: Instagram URL (Post or Profile) or valid Local Path.")
             return
         
-        target_url = f"https://www.instagram.com/p/{shortcode}/"
-        UI.info(f"Detected {Fore.GREEN}Instagram Post{Style.RESET_ALL}: {shortcode}")
-        UI.info(f"Action: Scraping media, comments, and stickers.")
+        target_url = user_input if is_profile else f"https://www.instagram.com/p/{target_id}/"
+        if is_profile:
+             target_url = f"https://www.instagram.com/{target_id}/"
+
+        mode_label = "PROFILE" if is_profile else "POST"
+        UI.info(f"Detected {Fore.GREEN}Instagram {mode_label}{Style.RESET_ALL}: {target_id}")
         
         if not UI.confirm("Start browser session?"):
             UI.warning("Operation cancelled.")
@@ -766,15 +963,19 @@ class BrowserGifGrabber:
         
         # Output Directory Structure
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        session_folder = os.path.join(CONFIG.BASE_OUTPUT_DIR, f"{shortcode}_{timestamp}")
+        prefix = "profile" if is_profile else "post"
+        session_folder = os.path.join(CONFIG.BASE_OUTPUT_DIR, f"{target_id}_{timestamp}")
+        
         media_dir = os.path.join(session_folder, "media")
-        stickers_dir = os.path.join(session_folder, "stickers")
+        stickers_dir = os.path.join(session_folder, "stickers") # For post comments
         converted_dir = os.path.join(session_folder, "converted")
+        stories_dir = os.path.join(session_folder, "stories")
+        highlights_dir = os.path.join(session_folder, "highlights")
         
         os.makedirs(session_folder, exist_ok=True)
-        if CONFIG.DOWNLOAD_MEDIA: os.makedirs(media_dir, exist_ok=True)
-        os.makedirs(stickers_dir, exist_ok=True)
-        if CONFIG.CONVERT_TO_MP4: os.makedirs(converted_dir, exist_ok=True)
+        if not is_profile and CONFIG.DOWNLOAD_MEDIA: os.makedirs(media_dir, exist_ok=True)
+        if not is_profile: os.makedirs(stickers_dir, exist_ok=True)
+        if CONFIG.CONVERT_TO_MP4: os.makedirs(converted_dir, exist_ok=True) # General use
 
         UI.section("BROWSER SESSION")
         
@@ -796,53 +997,64 @@ class BrowserGifGrabber:
                 page = ctx.new_page()
                 page.set_default_timeout(60000)
                 
+                # Check auth on target
                 if not self.ensure_authentication(page, target_url):
-                    UI.error("Could not access target post. Exiting.")
+                    UI.error("Could not access target. Exiting.")
                     ctx.close()
                     return
                 
-                # 1. Post Media
-                if CONFIG.DOWNLOAD_MEDIA:
-                    self.extract_post_media(page, media_dir)
+                if is_profile:
+                    # PROFILE MODE
+                    self.extract_profile_pic(page, target_id, session_folder)
+                    self.extract_stories(page, target_id, stories_dir)
+                    self.extract_highlights(page, target_id, highlights_dir)
+                else:
+                    # POST MODE
+                    # 1. Post Media
+                    if CONFIG.DOWNLOAD_MEDIA:
+                        self.extract_post_media(page, media_dir)
 
-                # 2. Comments & Stickers
-                scan_res = self.scan_comments(page)
-                sticker_urls = scan_res.get("stickers", set())
-                comments = scan_res.get("comments", [])
+                    # 2. Comments & Stickers
+                    scan_res = self.scan_comments(page)
+                    sticker_urls = scan_res.get("stickers", set())
+                    comments = scan_res.get("comments", [])
                 
                 page.close()
                 
             finally:
                 ctx.close()
         
-        # Save Comments
-        if comments:
-            with open(os.path.join(session_folder, "comments.json"), 'w', encoding='utf-8') as f:
-                json.dump(comments, f, indent=2, ensure_ascii=False)
-            UI.success(f"Saved {len(comments)} comments.")
-            
-        if not sticker_urls:
-            UI.warning("No GIF stickers found in comments.")
-        else:
-            # Download Stickers
-            UI.section(f"DOWNLOAD ({len(sticker_urls)} stickers)")
-            downloaded = self.download_stickers_parallel(list(sticker_urls), stickers_dir)
-            
-            if not downloaded:
-                UI.error("No stickers downloaded.")
+        # Post-Processing
+        if not is_profile:
+            # Save Comments
+            if comments:
+                with open(os.path.join(session_folder, "comments.json"), 'w', encoding='utf-8') as f:
+                    json.dump(comments, f, indent=2, ensure_ascii=False)
+                UI.success(f"Saved {len(comments)} comments.")
+                
+            if not sticker_urls:
+                UI.warning("No GIF stickers found in comments.")
             else:
-                # Convert
-                if CONFIG.CONVERT_TO_MP4:
-                    self.convert_stickers_parallel(downloaded, converted_dir)
+                # Download Stickers
+                UI.section(f"DOWNLOAD ({len(sticker_urls)} stickers)")
+                downloaded = self.download_stickers_parallel(list(sticker_urls), stickers_dir)
+                
+                if not downloaded:
+                    UI.error("No stickers downloaded.")
+                else:
+                    # Convert
+                    if CONFIG.CONVERT_TO_MP4:
+                        self.convert_stickers_parallel(downloaded, converted_dir)
         
         # Archive
         UI.section("FULL ARCHIVE")
-        zip_path = shutil.make_archive(session_folder, 'zip', CONFIG.BASE_OUTPUT_DIR, f"{shortcode}_{timestamp}")
+        zip_path = shutil.make_archive(session_folder, 'zip', CONFIG.BASE_OUTPUT_DIR, f"{target_id}_{timestamp}")
         UI.success(f"Archive: {zip_path}")
         
         # Final Report
         duration = time.time() - start_time
-        UI.final_report(len(sticker_urls), duration, zip_path)
+        count_report = len(sticker_urls) if not is_profile else "N/A"
+        UI.final_report(count_report, duration, zip_path)
         print(f"\n    {Fore.YELLOW}LOKASI HASIL (OUTPUT):{Style.RESET_ALL}")
         print(f"    - Folder: {Fore.GREEN}{session_folder}{Style.RESET_ALL}")
         print(f"    - File ZIP: {Fore.GREEN}{zip_path}.zip{Style.RESET_ALL}")
